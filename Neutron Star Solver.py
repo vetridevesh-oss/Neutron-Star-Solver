@@ -1,9 +1,18 @@
-#!/usr/bin/env python
-# coding: utf-8
+# ---
+# jupyter:
+#   jupytext:
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.19.5
+#   kernelspec:
+#     display_name: Python [conda env:base] *
+#     language: python
+#     name: conda-base-py
+# ---
 
-# In[2]:
-
-
+# %%
 #Needed libraries
 import numpy as np
 from scipy.constants import G, c, pi
@@ -11,9 +20,7 @@ from scipy.integrate import solve_ivp
 from scipy.interpolate import CubicSpline, PchipInterpolator
 import matplotlib.pyplot as plt
 import time
-import os
 import mpmath as mp
-from concurrent.futures import ProcessPoolExecutor
 
 #All the constants needed
 Msol = 1.98847 * 10**30 #kg
@@ -52,151 +59,6 @@ def love_number_k2(beta, yR, small_beta_cutoff=0.05):
     if beta < small_beta_cutoff:
         return _k2_formula(beta, yR, dps=50)
     return _k2_formula(beta, yR)
-
-
-def _finalize_results(results, r_cut_km):
-    """Shared post-processing for both the serial and parallel sweep paths:
-    builds Lambda, finds Mmax, and selects the physically stable branch."""
-    results = np.array(results)
-    if results.size == 0:
-        raise RuntimeError("No central pressures produced a valid stellar solution — check Rbar_max or the EOS table.")
-    Pcs, Rs, Ms, betas, yRs, k2s, lams = results.T
-
-    #Dimensionless tidal deformability, Lambda = lambda / M_geom^5.
-    M_geom_km = Ms * (R0 / 2.0)
-    Lambdas = lams / M_geom_km**5
-
-    idx_max = np.argmax(Ms)
-
-    valid = Rs < r_cut_km
-    if not np.any(valid[:idx_max + 1]):
-        stable = slice(idx_max, idx_max + 1)
-    else:
-        start = idx_max
-        while start > 0 and (Ms[start - 1] < Ms[start]) and valid[start - 1]:
-            start -= 1
-        stable = slice(start, idx_max + 1)
-
-    return {
-        "Pcs": Pcs, "Rs": Rs, "Ms": Ms, "betas": betas, "yRs": yRs,
-        "k2s": k2s, "lambdas": lams, "Lambdas": Lambdas,
-        "Mmax": Ms[idx_max], "Rmax": Rs[idx_max], "idx_max": idx_max,
-        "stable": stable,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Parallel sweep. The Pbar_c sweep inside EOStoObservables is embarrassingly
-# parallel -- each central pressure integrates a fully independent star.
-# ProcessPoolExecutor needs the worker function to be a plain top-level
-# function (closures like the ones inside EOStoObservables can't reliably be
-# pickled to send to worker processes), so this is a self-contained,
-# module-level re-implementation of the same TOV+y physics, with the EOS
-# interpolants built ONCE per worker process (via the initializer) rather
-# than once per central pressure.
-# ---------------------------------------------------------------------------
-_worker = {}  # populated once per worker process by _init_worker
-
-def _init_worker(EOS):
-    global _worker
-    tabEOS = np.loadtxt(EOS, skiprows=4)
-    energydbar = tabEOS[:, 0] / P0
-    pressurebar = tabEOS[:, 1] / P0
-    logPbar, logebar = np.log(pressurebar), np.log(energydbar)
-    logE_of_logP = PchipInterpolator(logPbar, logebar, extrapolate=False)
-    _worker["logE_of_logP"] = logE_of_logP
-    _worker["dlogE_dlogP"] = logE_of_logP.derivative(1)
-    _worker["Pbar_min"] = pressurebar.min()
-    _worker["Pbar_max"] = pressurebar.max()
-
-def _pressureToEnergyd_w(Pbar_eval):
-    return np.exp(_worker["logE_of_logP"](np.log(Pbar_eval)))
-
-def _cs2_from_Pbar_w(Pbar_eval):
-    lp = np.log(Pbar_eval)
-    slope = _worker["dlogE_dlogP"](lp)
-    if slope <= 0:
-        return 1e10
-    ebar = np.exp(_worker["logE_of_logP"](lp))
-    return float((Pbar_eval / ebar) / slope)
-
-def _TOV_w(Rbar, y):
-    Mbar, Pbar, yL = y
-    Pbar_eval = max(Pbar, _worker["Pbar_min"])
-    ebar = _pressureToEnergyd_w(Pbar_eval)
-    cs2 = _cs2_from_Pbar_w(Pbar_eval)
-
-    dMbar_dRbar = ebar * Rbar**2
-    dPbar_dRbar = -1 * (Mbar * ebar / (2 * Rbar**2)) * (1 + Pbar / ebar) * (1 + Rbar**3 * Pbar / Mbar) * (1 - Mbar / Rbar)**-1
-
-    ELAM = 1.0 / (1.0 - Mbar / Rbar)
-    y_elam_term = 1.0 + 0.5 * Rbar**2 * (Pbar - ebar)
-    Q_bracket = 5*ebar + 9*Pbar + (ebar + Pbar) / cs2
-    r2Q = 0.5 * Rbar**2 * ELAM * Q_bracket - 6*ELAM \
-          - (ELAM**2 / Rbar**2) * (Mbar + Rbar**3 * Pbar)**2
-    dyL_dRbar = -(1.0 / Rbar) * (yL**2 + yL * ELAM * y_elam_term + r2Q)
-
-    return [dMbar_dRbar, dPbar_dRbar, dyL_dRbar]
-
-def _surface_w(Rbar, y):
-    return y[1]
-_surface_w.terminal = True
-_surface_w.direction = -1
-
-def _collapsed_star_task(Pbar_c):
-    """Top-level worker: integrate one star. Runs in a worker process;
-    reads EOS interpolants from _worker, which _init_worker populated once
-    when that process started."""
-    Pbar_min, Pbar_max = _worker["Pbar_min"], _worker["Pbar_max"]
-    if not (Pbar_min <= Pbar_c <= Pbar_max):
-        return None
-    ebar_c = _pressureToEnergyd_w(Pbar_c)
-    Rbar0 = 1e-6
-    Mbar0 = ebar_c * Rbar0**3 / 3
-    y0 = [Mbar0, Pbar_c, 2.0]
-    sol = solve_ivp(_TOV_w, (Rbar0, 5000), y0, method='RK45', events=_surface_w,
-                     rtol=1e-8, atol=1e-10)
-    if not sol.success or len(sol.t_events[0]) == 0:
-        return None
-    Rbarf = sol.t_events[0][0]
-    Mbarf, Pbarf, yRbar = sol.y_events[0][0]
-    R = Rbarf * R0
-    beta = Mbarf / (2.0 * Rbarf)
-    try:
-        k2 = love_number_k2(beta, yRbar)
-    except (ZeroDivisionError, ValueError):
-        return None
-    if not np.isfinite(k2):
-        return None
-    lam = (2.0 / 3.0) * k2 * R**5
-    return (Pbar_c, R, Mbarf, beta, yRbar, k2, lam)
-
-
-def EOStoObservables_parallel(EOS, r_cut_km=50.0, n_workers=None, n_points=1000, chunksize=4):
-    """
-    Same physics and same return format as EOStoObservables, but sweeps
-    central pressures across multiple worker processes. On a single large
-    EOS table (hundreds to thousands of Pbar_c points, each an independent
-    solve_ivp call), this is the parallelism that actually matters --
-    parallelizing across EOS *files* instead only helps once you have at
-    least as many files as CPU cores.
-
-    n_workers defaults to os.cpu_count(). Must be called from inside
-    `if __name__ == "__main__":` (or imported from a saved .py file, not
-    pasted into a notebook cell) -- see note below.
-    """
-    tabEOS = np.loadtxt(EOS, skiprows=4)
-    pressurebar = tabEOS[:, 1] / P0
-    Pbar_min, Pbar_max = pressurebar.min(), pressurebar.max()
-    Pbar_c_values = np.logspace(np.log10(Pbar_min) + 2, np.log10(Pbar_max) - 0.1, n_points)
-
-    n_workers = n_workers or os.cpu_count()
-    with ProcessPoolExecutor(max_workers=n_workers, initializer=_init_worker,
-                              initargs=(EOS,)) as ex:
-        raw = list(ex.map(_collapsed_star_task, Pbar_c_values, chunksize=chunksize))
-
-    results = [r for r in raw if r is not None]
-    return _finalize_results(results, r_cut_km)
 
 
 # This is where you replace the " " place with whatever tabular EOS file name
@@ -264,14 +126,14 @@ def EOStoObservables(EOS, r_cut_km=50.0):
         dyL_dRbar = -(1.0 / Rbar) * (yL**2 + yL * ELAM * y_elam_term + r2Q)
 
         return [dMbar_dRbar, dPbar_dRbar, dyL_dRbar]
-
+    
     #Pressure tracking for solver to stop when it reaches 0
     def surface(Rbar, y):
         Mbar, Pbar, yL = y
         return Pbar
     surface.terminal = True
     surface.direction = -1
-
+    
     #Initial Conditions
     def collapsed_star(Pbar_c):
         #Make sure Pbar_c is in the EOS
@@ -305,7 +167,7 @@ def EOStoObservables(EOS, r_cut_km=50.0):
         lam = (2.0 / 3.0) * k2 * R**5  # km^5, G=c=1 convention
 
         return R, M, beta, yRbar, k2, lam
-
+    
     #Sweep over all Pbar_c except those too close to the surface and the highest densities
     Pbar_c_values = np.logspace(np.log10(Pbar_min) + 2, np.log10(Pbar_max) - 0.1, 1000)
     results = []
@@ -314,60 +176,59 @@ def EOStoObservables(EOS, r_cut_km=50.0):
         if out is not None:
             R, M, beta, yRbar, k2, lam = out
             results.append((Pc, R, M, beta, yRbar, k2, lam))
-    results = [r for r in results if r is not None]
-    return _finalize_results(results, r_cut_km)
+    results = np.array(results)
+    if results.size == 0:
+        raise RuntimeError("No central pressures produced a valid stellar solution — check Rbar_max or the EOS table.")
+    Pcs, Rs, Ms, betas, yRs, k2s, lams = results.T
+
+    #Dimensionless tidal deformability, Lambda = lambda / M_geom^5.
+    #lambda is already in km^5 (G=c=1 convention); M_geom is the mass
+    #converted from solar masses into the SAME geometrized length units
+    #(km), M_geom = M[Msun] * (R0/2), since R0 = 2*G*Msol/c^2.
+    M_geom_km = Ms * (R0 / 2.0)
+    Lambdas = lams / M_geom_km**5
+
+    #Gets the maximum mass for the EOS
+    idx_max = np.argmax(Ms)
+
+    #Physical branch selection, two parts:
+    #  (1) R < r_cut_km: real EOS tables often extend down to near-vacuum
+    #      density, where central pressures barely above the table's floor
+    #      integrate out to enormous, physically meaningless radii (not
+    #      "real" white-dwarf-like structure, just numerical extension of
+    #      an almost-pressureless gas ball). r_cut_km=50 is generous --
+    #      real NS/WD radii from a core-EOS table stay well under this.
+    #  (2) walk backward from Mmax while mass is still increasing with Pc:
+    #      removes the unstable (dM/dPc<0) branch past the maximum mass,
+    #      which doesn't correspond to real stars either.
+    valid = Rs < r_cut_km
+    if not np.any(valid[:idx_max + 1]):
+        stable = slice(idx_max, idx_max + 1)  # degenerate fallback
+    else:
+        start = idx_max
+        while start > 0 and (Ms[start - 1] < Ms[start]) and valid[start - 1]:
+            start -= 1
+        stable = slice(start, idx_max + 1)
+
+    return {
+        "Pcs": Pcs, "Rs": Rs, "Ms": Ms, "betas": betas, "yRs": yRs,
+        "k2s": k2s, "lambdas": lams, "Lambdas": Lambdas,
+        "Mmax": Ms[idx_max], "Rmax": Rs[idx_max], "idx_max": idx_max,
+        "stable": stable,  # slice object -- e.g. out["Ms"][out["stable"]]
+    }
 
 
-def compare_eos(eos_files, labels=None, r_cut_km=50.0, savepath="eos_comparison.png"):
-    """
-    Overlay multiple EOS curves on the same M-R / Lambda-M / Lambda-R axes,
-    in the style of papers like the one you're checking against (panel a:
-    M vs R; panel b: Lambda vs M and Lambda vs R side by side).
-
-    eos_files: list of paths to tabulated EOS files (same format as
-               EOStoObservables expects)
-    labels: optional list of legend labels (defaults to filenames)
-    """
-    if labels is None:
-        labels = [f.split("/")[-1] for f in eos_files]
-
-    #A fixed color cycle so each EOS gets a distinct, consistent color
-    #across all three panels (matplotlib's default cycle repeats after 10,
-    #which is enough for a typical EOS comparison; pass your own list of
-    #hex colors here if you have more than 10 EOS).
-    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
-
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-
-    all_results = {}
-    for i, (fname, label) in enumerate(zip(eos_files, labels)):
-        color = colors[i % len(colors)]
-        out = EOStoObservables(fname, r_cut_km=r_cut_km)
-        all_results[label] = out
-        s = out["stable"]
-
-        axes[0].plot(out["Rs"][s], out["Ms"][s], color=color, label=label)
-        axes[1].plot(out["Ms"][s], out["Lambdas"][s], color=color, label=label)
-        axes[2].plot(out["Rs"][s], out["Lambdas"][s], color=color, label=label)
-
-    axes[0].set_xlabel(r"R [km]"); axes[0].set_ylabel(r"M [$M_\odot$]")
-    axes[0].set_ylim(bottom=0)
-
-    axes[1].set_xlabel(r"M [$M_\odot$]"); axes[1].set_ylabel(r"$\Lambda$")
-    axes[1].set_yscale("log")
-
-    axes[2].set_xlabel(r"R [km]"); axes[2].set_ylabel(r"$\Lambda$")
-    axes[2].set_yscale("log")
-
-    axes[0].legend(fontsize=8, loc="best")
-    plt.tight_layout()
-    plt.savefig(savepath, dpi=150)
-    return all_results
 
 
+
+#Code for visualizing results in plots/graphs
+
+
+#The below code in 'if _name_' runs if I run the entire cell, outputting the graphs listed below for a single EOS file.
 if __name__ == "__main__":
     t0 = time.time()
-    out = EOStoObservables_parallel("EOSBetaNL3.dat")
+    #Replace EOSName with the name of the EOS file to create the graphs of M-R, k2-B, dimensionful lambda-M, and dimensionlass lambda-M
+    out = EOStoObservables("EOSBetaNL3.dat")
     print(f"Swept {len(out['Pcs'])} central pressures in {time.time()-t0:.1f}s")
     print(f"Mmax = {out['Mmax']:.3f} Msun at R = {out['Rmax']:.3f} km")
 
@@ -378,6 +239,9 @@ if __name__ == "__main__":
     s = out["stable"]
     fig, axes = plt.subplots(1, 4, figsize=(19, 4))
     axes[0].plot(out["Rs"][s], out["Ms"][s])
+    #Change the values in the setlims from whatever to whatever if you want to customize from where to where your axes are. If you want to let it be uniform according to the data, just delete them and let python do its thing.
+    axes[0].set_xlim(7.8, 17.5)
+    axes[0].set_ylim(0, 3)
     axes[0].set_xlabel("R [km]"); axes[0].set_ylabel(r"M [$M_\odot$]"); axes[0].set_title("Mass-Radius (stable branch)")
 
     axes[1].plot(out["betas"][s], out["k2s"][s])
@@ -388,16 +252,65 @@ if __name__ == "__main__":
     axes[2].set_xlabel(r"M [$M_\odot$]"); axes[2].set_ylabel(r"$\lambda$ [km$^5$]"); axes[2].set_title("Tidal deformability")
 
     axes[3].plot(out["Ms"][s], out["Lambdas"][s])
+    axes[3].set_xlim(0.38, 2.02)
+    axes[3].set_ylim(10, 600000)
     axes[3].set_yscale("log")
     axes[3].set_xlabel(r"M [$M_\odot$]"); axes[3].set_ylabel(r"$\Lambda$"); axes[3].set_title("Dimensionless tidal deformability")
 
     plt.tight_layout()
     plt.savefig("mrk2_test.png", dpi=120)
     print("Saved mrk2_test.png")
+    for i, ax in enumerate(axes):
+        print(f"Plot {i}")
+        print("x limits:", ax.get_xlim())
+        print("y limits:", ax.get_ylim())
 
+#The compare_eos is a method, so I have to call it with inputs in the form of compare_eos(["IUFSU.dat", "FSUGarnet.dat", "RMF022.dat"],labels=["IUFSU", "FSUGarnet", "RMF022"]) for it to create a file with the generated graph.
+#This is useful because I can import this method from this file into other files to use just this method
+def compare_eos(eos_files, labels=None, r_cut_km=50.0, savepath="eos_comparison.png"):
+    """
+    Overlay multiple EOS curves on the same M-R / Lambda-M / Lambda-R axes,
+    in the style of papers like the one you're checking against (panel a:
+    M vs R; panel b: Lambda vs M and Lambda vs R side by side).
+ 
+    eos_files: list of paths to tabulated EOS files (same format as
+               EOStoObservables expects)
+    labels: optional list of legend labels (defaults to filenames)
+    """
+    if labels is None:
+        labels = [f.split("/")[-1] for f in eos_files]
+ 
+    #A fixed color cycle so each EOS gets a distinct, consistent color
+    #across all three panels (matplotlib's default cycle repeats after 10,
+    #which is enough for a typical EOS comparison; pass your own list of
+    #hex colors here if you have more than 10 EOS).
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+ 
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+ 
+    all_results = {}
+    for i, (fname, label) in enumerate(zip(eos_files, labels)):
+        color = colors[i % len(colors)]
+        out = EOStoObservables(fname, r_cut_km=r_cut_km)
+        all_results[label] = out
+        s = out["stable"]
+ 
+        axes[0].plot(out["Rs"][s], out["Ms"][s], color=color, label=label)
+        axes[1].plot(out["Ms"][s], out["Lambdas"][s], color=color, label=label)
+        axes[2].plot(out["Rs"][s], out["Lambdas"][s], color=color, label=label)
+ 
+    axes[0].set_xlabel(r"R [km]"); axes[0].set_ylabel(r"M [$M_\odot$]")
+    axes[0].set_ylim(bottom=0)
+ 
+    axes[1].set_xlabel(r"M [$M_\odot$]"); axes[1].set_ylabel(r"$\Lambda$")
+    axes[1].set_yscale("log")
+ 
+    axes[2].set_xlabel(r"R [km]"); axes[2].set_ylabel(r"$\Lambda$")
+    axes[2].set_yscale("log")
+ 
+    axes[0].legend(fontsize=8, loc="best")
+    plt.tight_layout()
+    plt.savefig(savepath, dpi=150)
+    return all_results
 
-# In[ ]:
-
-
-
-
+# %%
