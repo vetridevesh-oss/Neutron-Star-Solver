@@ -14,8 +14,8 @@
 
 # %%
 import time
-from scifair_sandbox import compare_eos
+from neutronstar_solver import compare_eos
 
-compare_eos(["EOSBetaFSU2L47.dat", "EOSBetaFSU2L48.dat", "EOSBetaFSU2L49.dat", "EOSBetaFSU2L50.dat"])
+returns = compare_eos(["EOSBetaIUFSU.dat", "EOSBetaFSUGarnet.dat", "EOSBetaRMF022.dat", "EOSBetaTAMUCFSUa.dat", "EOSBetaNL3.dat", "EOSBetaRMF028.dat", "EOSBetaFSUGold2.dat", "EOSBetaTAMUCFSUb.dat", "EOSBetaRMF032.dat", "EOSBetaTAMUCFSUc.dat"])
 
 # %%
