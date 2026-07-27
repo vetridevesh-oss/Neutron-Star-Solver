@@ -327,7 +327,17 @@ def EOStoObservables(EOS, r_cut_km=50.0):
     return _finalize_results(results, r_cut_km)
 
 
-def compare_eos(eos_files, labels=None, r_cut_km=50.0, savepath="eos_comparison.png"):
+def _compare_eos_worker(args):
+    """Top-level (picklable) helper: run the *serial* per-file sweep for one
+    EOS. Must stay serial in here -- this already runs inside a worker
+    process spawned by compare_eos's ProcessPoolExecutor, and daemonic
+    worker processes are not allowed to spawn their own child processes, so
+    calling EOStoObservables_parallel from in here would raise."""
+    fname, r_cut_km = args
+    return EOStoObservables(fname, r_cut_km=r_cut_km)
+
+
+def compare_eos(eos_files, labels=None, r_cut_km=50.0, savepath="eos_comparison.png", n_workers=None):
     """
     Overlay multiple EOS curves on the same M-R / Lambda-M / Lambda-R axes,
     in the style of papers like the one you're checking against (panel a:
@@ -336,6 +346,9 @@ def compare_eos(eos_files, labels=None, r_cut_km=50.0, savepath="eos_comparison.
     eos_files: list of paths to tabulated EOS files (same format as
                EOStoObservables expects)
     labels: optional list of legend labels (defaults to filenames)
+    n_workers: processes to spread the *files* across (defaults to
+               os.cpu_count()). Each worker runs one file's full sweep
+               serially -- see _compare_eos_worker docstring for why.
     """
     if labels is None:
         labels = [f.split("/")[-1] for f in eos_files]
@@ -348,10 +361,15 @@ def compare_eos(eos_files, labels=None, r_cut_km=50.0, savepath="eos_comparison.
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
+    #One task per file, computed in its own process. Order is preserved by
+    #executor.map, so results[i] always corresponds to eos_files[i].
+    tasks = [(fname, r_cut_km) for fname in eos_files]
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        results = list(executor.map(_compare_eos_worker, tasks))
+
     all_results = {}
-    for i, (fname, label) in enumerate(zip(eos_files, labels)):
+    for i, (label, out) in enumerate(zip(labels, results)):
         color = colors[i % len(colors)]
-        out = EOStoObservables(fname, r_cut_km=r_cut_km)
         all_results[label] = out
         s = out["stable"]
 
@@ -403,5 +421,3 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.savefig("mrk2_test.png", dpi=120)
     print("Saved mrk2_test.png")
-
-# %%

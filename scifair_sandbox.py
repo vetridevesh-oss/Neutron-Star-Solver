@@ -13,8 +13,9 @@
 # ---
 
 # %%
-from test_parallel import EOStoObservables_parallel, compare_eos
+import time
+from scifair_sandbox import compare_eos
 
-out = EOStoObservables_parallel("EOSBetaNL3.dat")
+compare_eos(["EOSBetaFSU2L47.dat", "EOSBetaFSU2L48.dat", "EOSBetaFSU2L49.dat", "EOSBetaFSU2L50.dat"])
 
 # %%
