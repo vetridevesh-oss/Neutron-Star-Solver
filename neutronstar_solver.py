@@ -77,6 +77,9 @@ def _finalize_results(results, r_cut_km):
 
     idx_max = np.argmax(Ms)
 
+    # Index of the model closest to 1.4 Msun
+    i14 = np.argmin(np.abs(Ms - 1.4))
+    
     valid = Rs < r_cut_km
     if not np.any(valid[:idx_max + 1]):
         stable = slice(idx_max, idx_max + 1)
@@ -85,11 +88,28 @@ def _finalize_results(results, r_cut_km):
         while start > 0 and (Ms[start - 1] < Ms[start]) and valid[start - 1]:
             start -= 1
         stable = slice(start, idx_max + 1)
-
+    
     return {
-        "Pcs": Pcs, "Rs": Rs, "Ms": Ms, "betas": betas, "yRs": yRs,
-        "k2s": k2s, "lambdas": lams, "Lambdas": Lambdas,
-        "Mmax": Ms[idx_max], "Rmax": Rs[idx_max], "idx_max": idx_max,
+        "Pcs": Pcs,
+        "Rs": Rs,
+        "Ms": Ms,
+        "betas": betas,
+        "yRs": yRs,
+        "k2s": k2s,
+        "lambdas": lams,
+        "Lambdas": Lambdas,
+    
+        "Mmax": Ms[idx_max],
+        "Rmax": Rs[idx_max],
+        "idx_max": idx_max,
+    
+        "R1.4": Rs[i14],
+        "Lambda1.4": Lambdas[i14],
+        "k2_1.4": k2s[i14],
+        "beta1.4": betas[i14],
+        "lambda1.4": lams[i14],
+        "yR1.4": yRs[i14],
+    
         "stable": stable,
     }
 
@@ -181,7 +201,7 @@ def _collapsed_star_task(Pbar_c):
     return (Pbar_c, R, Mbarf, beta, yRbar, k2, lam)
 
 
-def EOStoObservables_parallel(EOS, r_cut_km=50.0, n_workers=None, n_points=1000, chunksize=4):
+def EOStoObservables_parallel(EOS, r_cut_km=50.0, n_workers=None, n_points=3000, chunksize=4):
     """
     Same physics and same return format as EOStoObservables, but sweeps
     central pressures across multiple worker processes. On a single large
@@ -316,7 +336,7 @@ def EOStoObservables(EOS, r_cut_km=50.0):
         return R, M, beta, yRbar, k2, lam
     
     #Sweep over all Pbar_c except those too close to the surface and the highest densities
-    Pbar_c_values = np.logspace(np.log10(Pbar_min) + 2, np.log10(Pbar_max) - 0.1, 1000)
+    Pbar_c_values = np.logspace(np.log10(Pbar_min) + 2, np.log10(Pbar_max) - 0.1, 3000)
     results = []
     for Pc in Pbar_c_values:
         out = collapsed_star(Pc)
