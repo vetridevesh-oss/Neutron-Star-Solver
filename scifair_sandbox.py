@@ -16,13 +16,6 @@
 import time
 from neutronstar_solver import compare_eos
 
-returns = compare_eos(["EOSBetaFSUGarnet.dat"])
-
-# %%
-nl3 = returns["EOSBetaFSUGarnet.dat"]
-
-print(nl3["Mmax"])
-print(nl3["R1.4"])
-print(nl3["Lambda1.4"])
+returns = compare_eos(["EOSBetaFSUGarnet.dat", "EOSBetaIUFSU.dat", "EOSBetaNL3.dat", "EOSBetaFSUGold2.dat", "EOSBetaRMF022.dat", "EOSBetaRMF028.dat"])
 
 # %%

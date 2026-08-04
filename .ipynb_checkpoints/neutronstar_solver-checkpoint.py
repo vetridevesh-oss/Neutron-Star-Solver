@@ -78,18 +78,9 @@ def _finalize_results(results, r_cut_km):
     idx_max = np.argmax(Ms)
 
     # Index of the model closest to 1.4 Msun
-    i14 = np.argmin(np.abs(Ms - 1.4))
-    
-    valid = Rs < r_cut_km
-    if not np.any(valid[:idx_max + 1]):
-        stable = slice(idx_max, idx_max + 1)
-    else:
-        start = idx_max
-        while start > 0 and (Ms[start - 1] < Ms[start]) and valid[start - 1]:
-            start -= 1
-        stable = slice(start, idx_max + 1)
 
-    def interpolate_at_mass(Ms, Rs, Lambdas, k2s, betas, stable, M_target=1.4):
+
+    def interpolate_at_mass(Ms, Rs, Lambdas, k2s, betas, lams, yRs, stable, M_target=1.4):
         s = stable
         M_stab = Ms[s]
         order = np.argsort(M_stab)  # ensure strictly increasing for Pchip
@@ -104,26 +95,21 @@ def _finalize_results(results, r_cut_km):
             raise ValueError(f"M={M_target} outside stable branch range "
                               f"[{M_sorted[0]:.3f}, {M_sorted[-1]:.3f}] Msun")
     
-        return (
-            float(R_of_M(M_target)),
-            float(Lambda_of_M(M_target)),
-            float(k2_of_M(M_target)),
-            float(beta_of_M(M_target)),
-        )
-
-    rad1_4, lambda1_4, k21_4, beta1_4 = interpolate_at_mass(Ms, Rs, Lambdas, k2s, betas, stable)
-
-    def refine_Mmax(Pcs, Ms, idx_max, half_window=2):
-        lo = max(idx_max - half_window, 0)
-        hi = min(idx_max + half_window + 1, len(Pcs))
-        a, b, c = np.polyfit(Pcs[lo:hi], Ms[lo:hi], 2)  # M = a*Pc^2 + b*Pc + c
-        if a >= 0:  # not concave-down locally; fall back to discrete point
-            return Pcs[idx_max], Ms[idx_max]
-        Pc_star = -b / (2*a)
-        M_star = a*Pc_star**2 + b*Pc_star + c
-        return Pc_star, M_star
-
-    PcMax, MMax = refine_Mmax(Pcs, Ms, idx_max)
+        return {
+            "R1.4": float(R_of_M(M_target)),
+            "Lambda1.4": float(Lambda_of_M(M_target)),
+            "k2_1.4": float(k2_of_M(M_target)),
+            "beta1.4": float(beta_of_M(M_target)),
+        }
+    
+    valid = Rs < r_cut_km
+    if not np.any(valid[:idx_max + 1]):
+        stable = slice(idx_max, idx_max + 1)
+    else:
+        start = idx_max
+        while start > 0 and (Ms[start - 1] < Ms[start]) and valid[start - 1]:
+            start -= 1
+        stable = slice(start, idx_max + 1)
     
     return {
         "Pcs": Pcs,
@@ -135,14 +121,14 @@ def _finalize_results(results, r_cut_km):
         "lambdas": lams,
         "Lambdas": Lambdas,
     
-        "Mmax": MMax,
+        "Mmax": Ms[idx_max],
         "Rmax": Rs[idx_max],
         "idx_max": idx_max,
     
-        "R1.4": rad1_4,
-        "Lambda1.4": lambda1_4,
-        "k2_1.4": k21_4,
-        "beta1.4": beta1_4,
+        "R1.4": Rs[i14],
+        "Lambda1.4": Lambdas[i14],
+        "k2_1.4": k2s[i14],
+        "beta1.4": betas[i14],
         "lambda1.4": lams[i14],
         "yR1.4": yRs[i14],
     
@@ -450,7 +436,7 @@ def compare_eos(eos_files, labels=None, r_cut_km=50.0, savepath="eos_comparison.
 
 if __name__ == "__main__":
     t0 = time.time()
-    out = EOStoObservables_parallel("EOSBetaFSUGarnet.dat")
+    out = EOStoObservables_parallel("EOSBetaNL3.dat")
     print(f"Swept {len(out['Pcs'])} central pressures in {time.time()-t0:.1f}s")
     print(f"Mmax = {out['Mmax']:.3f} Msun at R = {out['Rmax']:.3f} km")
 
@@ -477,5 +463,3 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.savefig("mrk2_test.png", dpi=120)
     print("Saved mrk2_test.png")
-
-# %%
