@@ -13,3 +13,7 @@
 # ---
 
 # %%
+from neutronstar_solver import compare_eos
+results = compare_eos(["EOSBetaIUFSU.dat", "EOSBetaTAMUCFSUa.dat", "EOSBetaNL3.dat"])
+
+# %%

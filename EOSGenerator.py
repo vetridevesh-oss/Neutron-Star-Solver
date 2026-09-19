@@ -70,7 +70,7 @@ def sample_params(rng, n_cc=0.5 * N_SAT):
     n1 = rng.uniform(1.0, 3.0) * N_SAT
     n2 = rng.uniform(3.5, 7.0) * N_SAT
     f1, f2 = rng.uniform(0.05, 0.3, size=2)
-    G0, G1, G2 = rng.uniform(1.5, 4.5, size=3)
+    G0, G1, G2 = rng.uniform(1.4, 5.0, size=3)
     return dict(n_cc=n_cc, n1=n1, n2=n2, w1=f1 * n1, w2=f2 * n2,
                 G0=G0, G1=G1, G2=G2)
 
