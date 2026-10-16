@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Observational posterior samples.  Not committed: the J0437 file alone is 213 MB
+# and the J0740 one 81 MB, both over GitHub's 100 MB per-file limit, and together
+# the four sets are ~330 MB.  They are reproducible downloads -- every path, DOI
+# and md5 is recorded in EOSInference/config.py, and datasets.py verifies the md5
+# and re-derives the published headline numbers on load.
+LVK GW170817/
+NICER PSR */
+
+# run output
+EOSInference/results/
+results/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
