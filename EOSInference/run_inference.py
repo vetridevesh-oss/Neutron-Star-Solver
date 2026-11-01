@@ -7,11 +7,15 @@ run_inference.py -- nested-sampling Bayesian inference of the two-transition hyb
     python run_inference.py --mock                # synthetic data (pipeline test, no real data needed)
     python run_inference.py --resume              # continue from the checkpoint
 
-For each hadronic EOS it runs dynesty over the six parameters
-(eps_trans, delta_eps_trans, eps_1, delta_eps_1, gamma1, gamma2), evaluates the
+For each hadronic EOS it runs dynesty over the three parameters
+(eps_trans, delta_eps_trans, gamma), evaluates the
 pure-hadronic baseline (no free parameters => Z_had = L_had) and reports
     ln B(hybrid / hadronic) = ln Z_hybrid - ln L_had.
-Output (in <outdir>/<eos-name>/): samples.npz, summary.json (+ dynesty checkpoint).
+ln Z_hybrid is the evidence under the TRUNCATED prior: dynesty integrates over the
+whole unit cube and the rejected draws contribute zero, so its own ln Z is
+ln f_acc + ln Z_truncated and ln f_acc is subtracted here (see acceptance.py).
+Output (in <outdir>/<eos-name>/): samples.npz, summary.json, acceptance.json
+(+ dynesty checkpoint).
 """
 import argparse
 import json
@@ -20,6 +24,7 @@ import time
 
 import numpy as np
 
+import acceptance
 import config
 from likelihood import Likelihood
 from model import HybridModel
@@ -56,6 +61,7 @@ def run_one(eos_file, like, args):
 
     rng = np.random.default_rng(args.seed)
     ckpt = os.path.join(outdir, "dynesty.save")
+    acc_cache = os.path.join(outdir, "acceptance.json")
     kw = dict(nlive=args.nlive, sample=args.sample, bound=args.bound, rstate=rng)
     t0 = time.time()
     if args.nprocs > 1:
@@ -63,16 +69,31 @@ def run_one(eos_file, like, args):
         with dypool.Pool(args.nprocs, model.loglike, model.prior_transform) as pool:
             sampler = _make(dynesty, args, pool.loglike, pool.prior_transform, kw, pool, ckpt)
             _go(sampler, args, ckpt)
+            wall = time.time() - t0
+            res = sampler.results
+            # thousands of independent TOV solves: reuse the sampler's pool while
+            # it is still alive (the workers rebuild a likelihood-free model)
+            acc = acceptance.estimate(model, cache=acc_cache, pool=pool, verbose=True)
     else:
         sampler = _make(dynesty, args, model.loglike, model.prior_transform, kw, None, ckpt)
         _go(sampler, args, ckpt)
-    res = sampler.results
-    wall = time.time() - t0
+        wall = time.time() - t0
+        res = sampler.results
+        acc = acceptance.estimate(model, cache=acc_cache, verbose=True)
 
-    logz, logzerr = float(res.logz[-1]), float(res.logzerr[-1])
+    # dynesty's ln Z is an integral over the whole unit cube with L = 0 on every
+    # draw the screens reject, i.e. ln Z_cube = ln f_acc + ln Z_truncated.  The
+    # model is defined on the truncated prior -- and the hadronic baseline has no
+    # truncation at all -- so the Bayes factor uses the corrected value.
+    logz_cube, logzerr_cube = float(res.logz[-1]), float(res.logzerr[-1])
+    ln_f, ln_f_err = acc["ln_f_acc"], acc["f_acc_err"] / acc["f_acc"]
+    logz = logz_cube - ln_f
+    logzerr = float(np.hypot(logzerr_cube, ln_f_err))
     weights = np.exp(res.logwt - res.logz[-1])
     summary = dict(eos=eos_file, branch_rule=config.LIKELIHOOD["branch_rule"], nlive=args.nlive,
                    ncall=int(np.sum(res.ncall)), wall_s=wall, logZ=logz, logZ_err=logzerr,
+                   logZ_unit_cube=logz_cube, logZ_unit_cube_err=logzerr_cube,
+                   prior_acceptance=_jsonable(acc),
                    lnL_hadronic=float(lnL_had), lnB_hybrid_vs_hadronic=float(logz - lnL_had),
                    lnB_err=logzerr,
                    hadronic_components=_jsonable(like.components(seq_had)) if seq_had.ok else {},
@@ -83,7 +104,9 @@ def run_one(eos_file, like, args):
              logz=logz, names=np.array(PARAM_NAMES))
     with open(os.path.join(outdir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
-    print(f"[{name}] ln Z = {logz:.3f} +/- {logzerr:.3f}; ln B(hybrid/hadronic) = {logz - lnL_had:+.3f}; "
+    print(f"[{name}] ln Z = {logz:.3f} +/- {logzerr:.3f} "
+          f"(unit cube {logz_cube:.3f}, prior acceptance {acc['f_acc']:.3f} -> {-ln_f:+.3f}); "
+          f"ln B(hybrid/hadronic) = {logz - lnL_had:+.3f}; "
           f"{summary['ncall']} calls in {wall/60:.1f} min")
     return summary
 
@@ -93,7 +116,7 @@ def _make(dynesty, args, loglike, ptform, kw, pool, ckpt):
         print("resuming from", ckpt)
         return dynesty.NestedSampler.restore(ckpt, pool=pool)
     extra = dict(pool=pool, queue_size=args.nprocs) if pool is not None else {}
-    return dynesty.NestedSampler(loglike, ptform, 6, **kw, **extra)
+    return dynesty.NestedSampler(loglike, ptform, len(PARAM_NAMES), **kw, **extra)
 
 
 def _go(sampler, args, ckpt):

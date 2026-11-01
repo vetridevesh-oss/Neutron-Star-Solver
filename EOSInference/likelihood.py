@@ -1,9 +1,14 @@
 """
 likelihood.py -- astrophysical likelihood of a computed stellar sequence.
 
-Every term has the same shape: a published posterior, divided by its sampling
-prior to recover a likelihood, integrated against the EOS-conditioned population
-prior over the star's mass (or, for the binary, over its mass ratio).
+Every term has the same shape: a published posterior, integrated against the
+EOS-conditioned population prior over the star's mass (or, for the binary, over
+its mass ratio), with any *non-uniform* part of the posterior's sampling prior
+divided out first.  For the three NICER sources there is nothing to divide: the
+(M, R) sampling priors are constants, and the radio mass priors inside the J0740
+and J0437 posteriors are independent data that is deliberately kept (see the
+per-source `sampling_prior` field in config.DATA).  Only the GW170817 q-prior is
+actually divided out, and there it sets the Occam factor -- see below.
 
   L_i(theta) = int dm pi(m|theta) * K_i(m, R(m; theta))                [NICER]
   L_GW(theta) = int dq pi(q|theta) * K_GW(q, Lambda1(q;theta), Lambda2(q;theta))

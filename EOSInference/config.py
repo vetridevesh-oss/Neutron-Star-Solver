@@ -21,8 +21,8 @@ EOS_SKIPROWS = 4
 EOS_COLS = (0, 1, 2)
 
 # --------------------------------------------------------------------------
-# 2. PRIOR RANGES  (uniform priors; the six sampled parameters are
-#    eps_trans, delta_eps_trans, eps_1, delta_eps_1, gamma1, gamma2)
+# 2. PRIOR RANGES  (uniform priors; the three sampled parameters are
+#    eps_trans, delta_eps_trans, gamma)
 #
 # eps_trans : energy density at the top of the hadronic phase (pre-jump side)
 #     kind = "n0"      -> bounds given in units of n0, converted to energy
@@ -32,41 +32,19 @@ EOS_COLS = (0, 1, 2)
 PRIOR = {
     "eps_trans": {"kind": "n0", "lo": 1.0, "hi": 6.0},
 
-    # How the two jumps are sampled.
-    #   "fractional": delta_eps_trans/eps_trans  and  delta_eps_1/eps_1 uniform in
-    #                 FRAC_* ranges below (DEFAULT, agreed).
-    #   "absolute"  : delta_eps uniform in ABS_* ranges [MeV/fm^3].
+    # How the jump is sampled.
+    #   "fractional": delta_eps_trans/eps_trans uniform in frac_delta_trans (DEFAULT, agreed).
+    #   "absolute"  : delta_eps_trans uniform in abs_delta_trans [MeV/fm^3].
     # NOTE: switching changes the prior volume and therefore the Bayes factors.
     "delta_mode": "fractional",
     "frac_delta_trans": (0.0, 1.5),
-    "frac_delta_1": (0.0, 1.5),
     "abs_delta_trans": (0.0, 1000.0),
-    "abs_delta_1": (0.0, 1000.0),
 
-    # eps_1 is the top of polytrope 1 (pre-jump side), and must exceed
-    # eps_trans + delta_eps_trans (the bottom of polytrope 1).  It is sampled
-    # uniformly *conditional* on that.
-    #   "width"   : eps_1 - start uniform in eps1_width, start = eps_trans+delta_eps_trans
-    #               (never empty; DEFAULT)
-    #   "absolute": eps_1 in [max(start+EPS1_MIN_GAP, EPS1_ABS[0]), EPS1_ABS[1]];
-    #               points where this interval is empty get zero prior support
-    "eps1_mode": "width",
-    "eps1_width": (10.0, 1500.0),
-    "eps1_abs": (300.0, 2500.0),
-    "eps1_min_gap": 10.0,
-    # Hard ceiling on eps_1, applied in BOTH modes.  The agreed specification put
-    # eps_1 at "up to about 1800 MeV/fm^3"; without the cap the width prior sends
-    # 54% of draws above it and puts the bottom of polytrope 2 beyond any central
-    # density a stable star reaches, so those draws are a one-transition model
-    # wearing two-transition clothes and they dilute the evidence.  Set to None to
-    # recover the uncapped behaviour -- that changes the prior volume and therefore
-    # every Bayes factor, so it is a decision to record, not a tuning knob.
-    "eps1_cap": 1800.0,
-
-    # polytropic indices of  P = K eps^gamma  (same wide range for both, so any
-    # soft-then-stiff ordering is read off the posterior, not imposed)
-    "gamma1": (0.5, 10.0),
-    "gamma2": (0.5, 10.0),
+    # polytropic index of  P = K eps^gamma  above the transition.  The polytrope
+    # has no upper end, so gamma alone sets how stiff the core is all the way to
+    # the central density of the heaviest stable star -- which is why most of the
+    # prior that gets rejected is rejected for cs^2 > 1 inside a star.
+    "gamma": (0.5, 10.0),
 }
 
 # --------------------------------------------------------------------------
@@ -120,6 +98,10 @@ DATA = {
             "order": ("M", "R"),
             "headline": {"M": (2.073, 0.069, 0.069), "R": (12.49, 0.88, 1.28)},
             "bounds": ((1, 16.0, "hi"),),      # R prior truncated at 16 km
+            # X-PSI sampling prior: the Fonseca+2021 radio Gaussian in M times a
+            # flat prior in R_eq.  Flat in R is a constant, and the Gaussian in M
+            # is independent data we keep, so there is nothing to divide out.
+            "sampling_prior": "radio Gaussian in M x flat in R_eq; nothing divided out",
             "note": "mass prior is the Fonseca+2021 radio/Shapiro measurement; that is "
                     "independent data and is deliberately NOT divided out.",
         },
@@ -132,6 +114,11 @@ DATA = {
             "order": ("M", "R"),
             "headline": {"M": (1.434, 0.167, 0.204), "R": (12.68, 1.04, 1.30)},
             "bounds": ((0, 1.0, "lo"), (1, 16.0, "hi")),   # M and R prior edges
+            # Joint flat in (M, R_eq) with hard edges (the Vinciguerra+2024
+            # convention, assumed to carry over to Kini+2026 -- CHECK against the
+            # Zenodo prior samples).  A constant, so nothing is divided out; the
+            # edges are handled by the KDE's mirroring (`bounds` above).
+            "sampling_prior": "joint flat in (M, R_eq) with hard edges; constant, nothing divided out",
             "note": "uniform M prior on [1, 3]; the EOS-side mass prior must not "
                     "extend below 1.0 (config.LIKELIHOOD['mass_prior_min']).",
         },
@@ -144,6 +131,15 @@ DATA = {
             "order": ("M", "R"),
             "headline": {"M": (1.429, 0.044, 0.044), "R": (14.12, 2.22, 1.36)},
             "bounds": (),
+            # Miller+2026 Table 1: flat in x = c^2 R_eq/(GM) on [3.2, 8.0] times the
+            # Reardon+2024 radio Gaussian N(1.418, 0.044) in M.  Dividing the flat-in-x
+            # part out would reweight by a factor proportional to M, which moves the
+            # weight by only +/-3% across this posterior, so it is NOT applied.  The
+            # x = 8 edge is the diagonal R = 11.81 (M/Msun) km and is not mirrored by
+            # `bounds`; 1.6% of the weight lies within 0.25 km of it, against a kernel
+            # width of about 0.06 km, so the leakage is negligible.
+            "sampling_prior": "flat in c^2 R/(GM) on [3.2, 8] x radio Gaussian in M; "
+                              "the implied weight ~ M (<=3%) is omitted",
             "note": "mass prior is the Reardon+2024 radio measurement (kept, as above). "
                     "The radius posterior is bimodal -- see the Choudhury+2024 "
                     "co-primary scenario in the scenario list.",
@@ -167,8 +163,12 @@ DATA = {
                 "Lambda1, Lambda2 flat on [0, 5000]; q NOT flat.",
     },
 
-    # PSR J0952-0607 mass measurement (Romani et al. 2022)
-    "mass_floor": {"mean": 2.35, "sigma": 0.17},
+    # PSR J0952-0607 mass.  Romani et al. 2025 (arXiv:2512.05099) tighten the
+    # Romani et al. 2022 value 2.35 +/- 0.17 to 2.35 +/- 0.11 (optical light-curve
+    # modelling of the companion; the quoted sigma does not include systematics).
+    # 0.17 is kept as a sensitivity scenario.
+    "mass_floor": {"mean": 2.35, "sigma": 0.11,
+                   "doi": "arXiv:2512.05099 (Romani+2025); 0.17 from arXiv:2207.05124"},
 }
 
 LIKELIHOOD = {
@@ -195,11 +195,28 @@ LIKELIHOOD = {
     #   "uniform_mass" (matches the GW sampling prior; the q-shapes then cancel)
     #   "flat_q"       (divides pi_s(q) out explicitly)
     "gw_population": "uniform_mass",
-    # "cdf"      : P(m < M_TOV), the conventional one-sided floor (approved spec)
+    # "cdf"      : P(m < M_TOV), the conventional one-sided floor
     # "marginal" : the same integral against pi(m|theta) as the NICER terms
-    "mass_floor_mode": "cdf",
+    # DEFAULT is "marginal" (decided 2026-10-31): every pulsar term then uses the
+    # same EOS-limited population prior, flat in m on the stable range normalised
+    # by 1/|U| (Legred+2021, arXiv:2106.05313).  "cdf" corresponds to an improper
+    # flat prior on m and carries no Occam factor; it is kept only to reproduce the
+    # older numbers.
+    "mass_floor_mode": "marginal",
     "seed": 12345,
 }
+
+# --------------------------------------------------------------------------
+# 4b. Prior acceptance (evidence renormalisation).
+#
+# The three causality screens truncate the prior: those draws return
+# ln L = -inf, so dynesty's evidence is an integral over the WHOLE unit
+# cube and comes out as  ln Z_cube = ln f_acc + ln Z_truncated.  The truncated
+# prior is the one the model means, so run_inference subtracts ln f_acc, which
+# acceptance.py estimates per hadronic table by Monte Carlo through the same
+# prior transform and the same screens.
+# --------------------------------------------------------------------------
+ACCEPTANCE = {"n_draws": 4000, "seed": 7}
 
 # --------------------------------------------------------------------------
 # 5. Sampler

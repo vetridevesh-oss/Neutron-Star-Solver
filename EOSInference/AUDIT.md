@@ -1,9 +1,59 @@
-# Audit of the two-transition hybrid-core inference package
+# Audit of the hybrid-core inference package
 
-Date: 2026-10-15. Baseline EOS for all numbers below: `EOSBetaFSU2L80.dat`.
-Everything quoted here was measured by running the code, not asserted.
+Date: 2026-10-15, with a dated addendum below. Baseline EOS for all numbers
+below: `EOSBetaFSU2L80.dat`. Everything quoted here was measured by running the
+code, not asserted.
 
 Reproduce with `python validate.py` (about 6 min; `--quick` for 2).
+
+---
+
+## 0. Addendum, 2026-10-31
+
+Three changes since the audit. Read this before anything below it.
+
+1. **The model is now ONE first-order transition and ONE polytrope**, sampled as
+   (ε_trans, Δε_trans, γ). The second transition was reached by a stable star in
+   only ~2% of the old prior, so γ₂ and Δε₁ were two unidentifiable parameters
+   that cost evidence without earning it. Everything below that mentions ε₁,
+   Δε₁, γ₂ or `eps1_cap` — §2.4 and parts of §3 and §4 — is **history**, kept
+   because it records why the prior was what it was. The polytrope now has no
+   upper end, so there is no ε₁ cap to miss.
+2. **The evidence is renormalised to the truncated prior.** §2.4 said that
+   rejected draws "contribute zero, which is what a truncated prior should do".
+   That is right for the posterior and **wrong for the evidence**: dynesty
+   integrates L over the whole unit cube, so its ln Z is ln f_acc + ln Z of the
+   truncated prior, while the hadronic baseline has no truncation at all.
+   `acceptance.py` measures f_acc per table through the same prior transform and
+   the same screens and `run_inference.py` subtracts ln f_acc (FSU2L80 f_acc =
+   0.336 ± 0.007, NL3 0.215 ± 0.006 at 4000 draws, seed 7), so ln B moves by
+   about +1.1 and +1.5 nat respectively. `summary.json` keeps both values.
+3. **J0952−0607** is now σ = 0.11 (Romani+2025, arXiv:2512.05099; 0.17 kept as a
+   sensitivity scenario) and the term defaults to `mass_floor_mode = "marginal"`,
+   so every pulsar term uses the same flat-in-m, 1/|U|-normalised population
+   prior (Legred+2021). The cdf form carried no Occam factor and was the one term
+   not on the same footing as the others.
+
+Two things the reparameterisation exposed, both recorded in `validate.py` test 5:
+
+* **Twin branches stay rare: 2.2%** of accepted prior draws have more than one
+  stable branch (3 of 139, test 9), the same few-percent level as the
+  two-transition prior, and an independent sample of 136 drew none at all. They
+  are also *small*: in test 9 the three multi-branch draws give identical ln L
+  under all three branch rules to 0.01 nat. So the branch rule is not currently
+  doing any work, and a test that waits for twins to appear only stalls.
+* **A marginal twin can be missed by the production grid.** On
+  θ = (440.9, 188.8, 2.07) the n_base = 70 grid steps straight over an unstable
+  dip only 6×10⁻⁴ M⊙ deep and reports one branch where the finer grids report
+  two (the second spanning 0.033 M⊙). Refinement only triggers on a sign change
+  it can already see, so it cannot find that dip. M_TOV agrees to 3×10⁻⁷, the
+  M(R) curve is identical and ln L moves by < 0.01 nat under every branch rule,
+  so this is the grid's resolution rather than a stability error — but a study
+  that counts twins should use a finer `n_base`.
+
+Still open and **not** done here: the mass-prior sensitivity options
+(`"split"`, `"population"`), freezing the source list before any real ln B, and
+null injections.
 
 ---
 
@@ -150,11 +200,11 @@ stable star reaches. Over half the prior volume was therefore a one-transition
 model wearing two-transition clothes, diluting Z_hybrid and inflating the Occam
 penalty on the thing you are trying to measure.
 
-**Fix.** `PRIOR["eps1_cap"] = 1800.0`, applied in both modes. Draws where
-ε_trans + Δε_trans leaves no room below the cap now fall outside the support
-(17.8% of the unit cube) and contribute zero, which is what a truncated prior
-should do. Set it to `None` to recover the old behaviour — that changes every
-Bayes factor, so record which you used.
+**Fix (superseded; see §0).** `PRIOR["eps1_cap"] = 1800.0` was applied in both
+modes, and draws where ε_trans + Δε_trans left no room below the cap fell outside
+the support (17.8% of the unit cube). The claim that they "contribute zero, which
+is what a truncated prior should do" was wrong for the *evidence*: see §0.2. With
+the one-transition model there is no ε₁ and no cap.
 
 ### 2.5 The mass quadrature was not converged
 

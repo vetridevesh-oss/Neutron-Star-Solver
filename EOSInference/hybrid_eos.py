@@ -1,15 +1,16 @@
 """
-hybrid_eos.py -- hadronic table + two first-order transitions + two polytropes.
+hybrid_eos.py -- hadronic table + ONE first-order transition + one polytrope.
 
-    P < P_t           : hadronic table (log-log Pchip, identical to your solver)
-    P = P_t           : jump  eps_trans -> eps_trans + d_t         (Maxwell construction)
-    P_t < P < P_1     : polytrope 1,  P = K1 eps^g1,  eps in [eps_trans+d_t, eps_1]
-    P = P_1           : jump  eps_1 -> eps_1 + d_1
-    P > P_1           : polytrope 2,  P = K2 eps^g2,  eps >= eps_1 + d_1
+    P < P_t   : hadronic table (log-log Pchip, identical to your solver)
+    P = P_t   : jump  eps_trans -> eps_trans + d_t          (Maxwell construction)
+    P > P_t   : polytrope,  P = K eps^gamma,  eps >= eps_trans + d_t
 
-with P_t = P_hadronic(eps_trans), P_1 = K1 eps_1^g1,
-K1 = P_t/(eps_trans+d_t)^g1 and K2 = P_1/(eps_1+d_1)^g2  (pressure continuous).
-Speed of sound in a polytrope: cs^2 = g P/eps.
+with P_t = P_hadronic(eps_trans) and K = P_t/(eps_trans+d_t)^gamma, so that the
+pressure is continuous.  The polytrope has no upper end: it runs to whatever
+central density the heaviest stable star reaches.  Speed of sound on it is
+cs^2 = gamma P/eps.
+
+The three sampled parameters are eps_trans, d_eps_trans and gamma.
 """
 import numpy as np
 from scipy.constants import G, c, pi
@@ -117,42 +118,33 @@ class HadronicTable:
 class HybridEOS:
     """Container for one parameter vector; `par` is the array handed to numba."""
 
-    def __init__(self, table, eps_trans, d_eps_trans, eps_1, d_eps_1, gamma1, gamma2):
+    def __init__(self, table, eps_trans, d_eps_trans, gamma):
         self.table = table
-        self.params = dict(eps_trans=eps_trans, d_eps_trans=d_eps_trans, eps_1=eps_1,
-                           d_eps_1=d_eps_1, gamma1=gamma1, gamma2=gamma2)
+        self.params = dict(eps_trans=eps_trans, d_eps_trans=d_eps_trans, gamma=gamma)
+        self.gamma = gamma
         self.valid, self.reason = True, ""
-        e_t = eps_trans / P0
         if not (table.eps[0] < eps_trans < table.eps[-1]):
             return self._fail("eps_trans outside table")
-        if d_eps_trans < 0 or d_eps_1 < 0:
+        if d_eps_trans < 0:
             return self._fail("negative jump")
-        if gamma1 <= 0 or gamma2 <= 0:
+        if gamma <= 0:
             return self._fail("gamma<=0")
-        start1 = eps_trans + d_eps_trans
-        if eps_1 <= start1:
-            return self._fail("eps_1 <= eps_trans + d_eps_trans")
         # transition pressure and the *actual* hadronic eps at it (consistent jump size)
-        self.P_t = float(table.P_bar_of_eps_bar(e_t))
-        self.eps_t = float(table.eps_bar(self.P_t))                    # eps-bar
-        self.eps_s1 = self.eps_t + d_eps_trans / P0                    # bottom of polytrope 1
-        self.K1 = self.P_t / self.eps_s1 ** gamma1
-        self.eps_1b = eps_1 / P0
-        self.P_1 = self.K1 * self.eps_1b ** gamma1
-        self.eps_s2 = self.eps_1b + d_eps_1 / P0
-        self.K2 = self.P_1 / self.eps_s2 ** gamma2
-        self.d_t, self.d_1 = d_eps_trans / P0, d_eps_1 / P0
-        if not (self.P_t < self.P_1 < BIG):
-            return self._fail("P_t >= P_1")
-        self.par = np.array([self.P_t, self.P_1, self.K1, gamma1, self.K2, gamma2,
-                             self.d_t, self.d_1, 0.0], dtype=np.float64)
+        self.P_t = float(table.P_bar_of_eps_bar(eps_trans / P0))
+        self.eps_t = float(table.eps_bar(self.P_t))          # eps-bar, hadronic side
+        self.d_t = d_eps_trans / P0
+        self.eps_s = self.eps_t + self.d_t                   # bottom of the polytrope
+        self.K = self.P_t / self.eps_s ** gamma
+        # par[4] = 1 switches to the ORIGINAL Postnikov et al. y-jump (no P term);
+        # validation only -- see validate.py test 4
+        self.par = np.array([self.P_t, self.K, gamma, self.d_t, 0.0], dtype=np.float64)
 
     @classmethod
     def pure_hadronic(cls, table):
         o = cls.__new__(cls)
         o.table, o.params, o.valid, o.reason = table, {}, True, ""
-        o.P_t, o.P_1 = BIG, BIG
-        o.par = np.array([BIG, BIG, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
+        o.P_t = BIG
+        o.par = np.array([BIG, 1.0, 1.0, 0.0, 0.0])
         o.is_hadronic = True
         return o
 
@@ -165,13 +157,9 @@ class HybridEOS:
         e = eps_c / P0
         if getattr(self, "is_hadronic", False) or e <= self.eps_t:
             return float(self.table.P_bar_of_eps_bar(min(e, self.table.eps[-1] / P0 * 0.9999)))
-        if e < self.eps_s1:
-            return self.P_t
-        if e <= self.eps_1b:
-            return self.K1 * e ** self.params["gamma1"]
-        if e < self.eps_s2:
-            return self.P_1
-        return self.K2 * e ** self.params["gamma2"]
+        if e < self.eps_s:
+            return self.P_t                      # inside the jump: no star has this eps_c
+        return self.K * e ** self.gamma
 
     def cs2_at_P(self, Pbar):
         """cs^2 on the *occupied* branch of the EOS at pressure Pbar (scalar)."""
@@ -179,97 +167,72 @@ class HybridEOS:
             lx = np.log(max(Pbar, self.table.Pbar_min))
             k = min(max(np.searchsorted(self.table.x, lx) - 1, 0), len(self.table.x) - 2)
             return float(self.table.cs2_knots[k])  # coarse; only used for diagnostics
-        if Pbar < self.P_1:
-            e = (Pbar / self.K1) ** (1 / self.params["gamma1"])
-            return self.params["gamma1"] * Pbar / e
-        e = (Pbar / self.K2) ** (1 / self.params["gamma2"])
-        return self.params["gamma2"] * Pbar / e
+        e = (Pbar / self.K) ** (1 / self.gamma)
+        return self.gamma * Pbar / e
 
     def max_cs2_up_to(self, Pc_max):
         """Exact max of cs^2 over every pressure occupied by a star with central pressure <= Pc_max."""
         if getattr(self, "is_hadronic", False) or Pc_max <= self.P_t:
             return float(self.table.cs2_max_below(min(Pc_max, self.table.Pbar_max)))
-        g1, g2 = self.params["gamma1"], self.params["gamma2"]
+        # cs^2 = gamma P/eps is monotone in P along the polytrope, so its endpoints bound it
         vals = [self.table.cs2_max_below(self.P_t)]
-        # polytrope 1: cs^2 = g P/eps is monotone in P over the segment -> endpoints
-        top1 = min(Pc_max, self.P_1)
-        for P in (self.P_t, top1):
-            e = (P / self.K1) ** (1 / g1)
-            vals.append(g1 * P / e)
-        if Pc_max > self.P_1:
-            for P in (self.P_1, Pc_max):
-                e = (P / self.K2) ** (1 / g2)
-                vals.append(g2 * P / e)
+        for P in (self.P_t, Pc_max):
+            vals.append(self.gamma * P / (P / self.K) ** (1 / self.gamma))
         return float(max(vals))
 
     def seidov(self):
-        """Seidov thresholds: unstable immediately after a transition if d/eps > 1/2 + 3P/(2 eps)."""
-        out = []
-        for (d, e, P) in ((self.d_t, self.eps_t, self.P_t), (self.d_1, self.eps_1b, self.P_1)):
-            out.append(dict(ratio=d / e, threshold=0.5 + 1.5 * P / e, unstable=d / e > 0.5 + 1.5 * P / e))
-        return out
+        """Seidov threshold: unstable immediately after the transition if d/eps > 1/2 + 3P/(2 eps)."""
+        ratio, threshold = self.d_t / self.eps_t, 0.5 + 1.5 * self.P_t / self.eps_t
+        return dict(ratio=ratio, threshold=threshold, unstable=ratio > threshold)
 
     # ---------------- Maxwell bookkeeping: n(eps) and mu(P) ----------------
     def number_density(self, eps_c_max=3000.0, n_pts=600):
         """Reconstruct the baryon number density across the whole hybrid EOS.
 
-        The polytropes are written in energy density, so they fix P(eps) but say
+        The polytrope is written in energy density, so it fixes P(eps) but says
         nothing about n.  n is recovered from the first law at zero temperature,
 
             d(eps/n)/d(1/n) = -P   <=>   dn/n = d(eps)/(eps + P),
 
-        integrated outward from the hadronic table's own n column.  Across each
+        integrated outward from the hadronic table's own n column.  Across the
         first-order transition the Maxwell conditions are that P and the baryon
         chemical potential mu = (eps + P)/n are both continuous, so the density on
-        the far side of a jump is NOT free:
+        the far side of the jump is NOT free:
 
             n_+ = n_- (eps_- + Delta_eps + P) / (eps_- + P).
 
         Because Delta_eps >= 0 and P > 0 this gives Delta_n >= 0 automatically, so
         the construction is a genuine Maxwell coexistence rather than an energy
         jump imposed by hand -- which is what justifies calling it one in print.
-        Returns a dict of arrays (MeV/fm^3, MeV/fm^3, fm^-3, MeV) plus the per-jump
+        Returns a dict of arrays (MeV/fm^3, MeV/fm^3, fm^-3, MeV) plus the jump
         numbers (n_t, Delta_n, mu) a reader will ask for.
         """
         if getattr(self, "is_hadronic", False) or not self.valid:
             raise ValueError("number_density() needs a valid hybrid parameter vector")
-        g1, g2 = self.params["gamma1"], self.params["gamma2"]
-        eps_t = self.eps_t * P0                       # MeV/fm^3, as the integrator sees it
-        P_t, P_1 = self.P_t * P0, self.P_1 * P0
-        eps_1, d_t, d_1 = self.eps_1b * P0, self.d_t * P0, self.d_1 * P0
-        K1 = self.K1 * P0 ** (1 - g1)                 # so that P[MeV/fm^3] = K1 eps^g1
-        K2 = self.K2 * P0 ** (1 - g2)
+        g = self.gamma
+        eps_t, P_t, d_t = self.eps_t * P0, self.P_t * P0, self.d_t * P0   # MeV/fm^3
+        K = self.K * P0 ** (1 - g)                    # so that P[MeV/fm^3] = K eps^g
 
-        def integrate(e0, n0, e1, K, g, m):
-            e = np.linspace(e0, e1, m)
-            P = K * e ** g
-            ln_n = n0 and np.log(n0)
-            y = np.concatenate([[0.0], np.cumsum(np.diff(e) / (0.5 * ((e + P)[1:] + (e + P)[:-1])))])
-            return e, P, np.exp(ln_n + y)
-
-        # hadronic segment
+        # hadronic segment, straight from the table
         sel = self.table.eps <= eps_t
-        e0, P0a, n0a = self.table.eps[sel], self.table.P[sel], self.table.n[sel]
+        e_h, P_h, n_h = self.table.eps[sel], self.table.P[sel], self.table.n[sel]
         n_t = self.table.n_of_eps(eps_t)
         mu_t = (eps_t + P_t) / n_t
-        # jump 1 (mu continuous)
-        n_s1 = (eps_t + d_t + P_t) / mu_t
-        e1, P1a, n1a = integrate(eps_t + d_t, n_s1, eps_1, K1, g1, n_pts)
-        n_1 = n1a[-1]
-        mu_1 = (eps_1 + P_1) / n_1
-        # jump 2
-        n_s2 = (eps_1 + d_1 + P_1) / mu_1
-        e_top = max(eps_c_max, (eps_1 + d_1) * 1.2)
-        e2, P2a, n2a = integrate(eps_1 + d_1, n_s2, e_top, K2, g2, n_pts)
+        n_s = (eps_t + d_t + P_t) / mu_t              # mu continuous across the jump
 
-        eps = np.concatenate([e0, e1, e2])
-        P = np.concatenate([P0a, P1a, P2a])
-        n = np.concatenate([n0a, n1a, n2a])
+        # polytrope, integrating dn/n = d(eps)/(eps + P) outward from n_s
+        e_p = np.linspace(eps_t + d_t, max(eps_c_max, (eps_t + d_t) * 1.2), n_pts)
+        P_p = K * e_p ** g
+        w = e_p + P_p
+        n_p = n_s * np.exp(np.concatenate(
+            [[0.0], np.cumsum(np.diff(e_p) / (0.5 * (w[1:] + w[:-1])))]))
+
+        eps = np.concatenate([e_h, e_p])
+        P = np.concatenate([P_h, P_p])
+        n = np.concatenate([n_h, n_p])
         return dict(eps=eps, P=P, n=n, mu=(eps + P) / n,
-                    jumps=[dict(eps=eps_t, P=P_t, mu=mu_t, n_lo=n_t, n_hi=n_s1,
-                                d_eps=d_t, d_n=n_s1 - n_t),
-                           dict(eps=eps_1, P=P_1, mu=mu_1, n_lo=n_1, n_hi=n_s2,
-                                d_eps=d_1, d_n=n_s2 - n_1)])
+                    jumps=[dict(eps=eps_t, P=P_t, mu=mu_t, n_lo=n_t, n_hi=n_s,
+                                d_eps=d_t, d_n=n_s - n_t)])
 
     def maxwell_report(self, n0=0.16, n_floor=1e-3):
         """Human-readable check that the Maxwell construction is self-consistent.

@@ -4,13 +4,13 @@ solver.py -- your TOV + tidal (y-equation) solver, adapted for the hybrid EOS.
 Same equations and dimensionless variables as neutronstar_solver.py
 (Rbar = r/R0, Mbar = M/Msun, Pbar = P/P0, ebar = eps/P0, y(0)=2), with:
   * numba-compiled adaptive Dormand-Prince RK45 (no scipy in the inner loop),
-  * the integration is split exactly at each transition pressure, and across
-    each jump the tidal function gets the corrected Takatsy & Kovacs (2020)
+  * the integration is split exactly at the transition pressure, and across
+    the jump the tidal function gets the corrected Takatsy & Kovacs (2020)
     Eq. (11) condition   y+ - y- = - 4 pi r^3 d_eps /(m + 4 pi r^3 P)
     which in these variables is   dy = - Rbar^3 d_ebar / (Mbar + Rbar^3 Pbar),
   * stability of every star decided by the Bardeen-Thorne-Meltzer turning-point
     rule, so ALL stable branches (twin / third family) are kept,
-  * the central-pressure sweep is adaptive (clusters around transitions and
+  * the central-pressure sweep is adaptive (clusters around the transition and
     refinement around every extremum of M(Pc)).
 Lambda = (2/3) k2 / beta^5 (identical to lambda / M_geom^5 in your solver).
 """
@@ -26,7 +26,7 @@ from hybrid_eos import P0, R0, BIG, HadronicTable, HybridEOS
 # ---------------------------------------------------------------------------
 @njit(cache=True)
 def eos_eps_cs2(P, phase, par, hx, hy, hd):
-    """eps-bar and cs^2 on the given phase (0 hadronic, 1 polytrope 1, 2 polytrope 2)."""
+    """eps-bar and cs^2 on the given phase (0 hadronic, 1 polytrope)."""
     if phase == 0:
         x = np.log(max(P, np.exp(hx[0])))
         n = hx.shape[0]
@@ -47,14 +47,9 @@ def eos_eps_cs2(P, phase, par, hx, hy, hd):
         if dly <= 0.0:
             return eps, 1e10
         return eps, (P / eps) / dly if P > 0 else (np.exp(x) / eps) / dly
-    elif phase == 1:
-        Pp = max(P, 1e-300)
-        eps = (Pp / par[2]) ** (1.0 / par[3])
-        return eps, par[3] * Pp / eps
-    else:
-        Pp = max(P, 1e-300)
-        eps = (Pp / par[4]) ** (1.0 / par[5])
-        return eps, par[5] * Pp / eps
+    Pp = max(P, 1e-300)
+    eps = (Pp / par[1]) ** (1.0 / par[2])
+    return eps, par[2] * Pp / eps
 
 
 @njit(cache=True)
@@ -122,20 +117,10 @@ def k2_love(beta, y):
 @njit(cache=True)
 def integrate_star(Pc, par, hx, hy, hd, Psurf, rtol, atol_M, atol_P, atol_y):
     """Integrate one star. Returns (status, Rbar, Mbar, yR, eps_c).  status 0 = ok."""
-    P_t, P_1 = par[0], par[1]
-    if Pc > P_1:
-        phase = 2
-    elif Pc > P_t:
-        phase = 1
-    else:
-        phase = 0
+    P_t = par[0]
+    phase = 1 if Pc > P_t else 0
     eps_c, _ = eos_eps_cs2(Pc, phase, par, hx, hy, hd)
-    if phase == 2:
-        thr = P_1
-    elif phase == 1:
-        thr = P_t
-    else:
-        thr = Psurf
+    thr = P_t if phase == 1 else Psurf
     R = 1e-6
     M = eps_c * R ** 3 / 3.0
     P = Pc
@@ -173,13 +158,12 @@ def integrate_star(Pc, par, hx, hy, hd, Psurf, rtol, atol_M, atol_P, atol_y):
             P = thr
             if phase == 0:
                 return 0, R, M, y, eps_c
-            # first-order transition: eps drops outward by d across r_d;
-            # corrected Takatsy-Kovacs jump condition (Eq. 11)
-            d = par[7] if phase == 2 else par[6]
-            # par[8] = 1 switches to the ORIGINAL Postnikov et al. form (no P term); validation only
-            y = y - R ** 3 * d / (M + R ** 3 * P * (1.0 - par[8]))
-            phase -= 1
-            thr = P_t if phase == 1 else Psurf
+            # first-order transition: eps drops outward by par[3] across r_d;
+            # corrected Takatsy-Kovacs jump condition (Eq. 11).  par[4] = 1 switches
+            # to the ORIGINAL Postnikov et al. form (no P term); validation only
+            y = y - R ** 3 * par[3] / (M + R ** 3 * P * (1.0 - par[4]))
+            phase = 0
+            thr = Psurf
             h = max(hh, 1e-8)
             continue
         R += h
@@ -289,11 +273,11 @@ def build_Pc_grid(eos, cfg):
     P_lo = float(t.P_bar_of_eps_bar(cfg["eps_c_min"] / P0))
     P_hi = eos.Pbar_at_eps_central(cfg["eps_c_max"])
     grid = list(np.geomspace(P_lo, P_hi, cfg["n_base"]))
-    for T in (eos.P_t, eos.P_1):
-        if P_lo < T < P_hi:
-            for dlt in cfg["cluster_deltas"]:
-                if dlt >= cfg["min_dlnPc"]:      # finer than this is pure ODE noise
-                    grid += [T * (1 + dlt), T * (1 - dlt)]
+    T = eos.P_t
+    if P_lo < T < P_hi:
+        for dlt in cfg["cluster_deltas"]:
+            if dlt >= cfg["min_dlnPc"]:          # finer than this is pure ODE noise
+                grid += [T * (1 + dlt), T * (1 - dlt)]
     return np.unique(np.array(grid)), P_lo, P_hi
 
 
