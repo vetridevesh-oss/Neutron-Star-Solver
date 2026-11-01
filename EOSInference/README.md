@@ -10,6 +10,10 @@ Sampled parameters: `eps_trans` (hadronic side of the transition),
 runs to whatever central density the heaviest stable star reaches. Everything you
 may want to change is in `config.py`.
 
+**`PREREGISTRATION.md` is the frozen analysis configuration.** Primary numbers
+come from exactly that configuration; anything else is a sensitivity analysis
+and is labelled as one.
+
 **Read `AUDIT.md` first.** It records what was wrong, what is now verified
 against published numbers, and the physics decisions that are still open — two
 of which change every Bayes factor.
@@ -17,7 +21,7 @@ of which change every Bayes factor.
 | file | role |
 |---|---|
 | `config.py` | prior ranges, sweep tolerances, data manifest (path + md5 + DOI + columns), branch rule, sampler settings |
-| `hybrid_eos.py` | hadronic table (log-log Pchip), the two polytropes and jumps, the c_s² envelope, and the Maxwell `n(eps)` / `mu(P)` reconstruction |
+| `hybrid_eos.py` | hadronic table (log-log Pchip), the jump and the polytrope, the c_s² envelope, and the Maxwell `n(eps)` / `mu(P)` reconstruction |
 | `solver.py` | TOV + y solver, numba-compiled; Takátsy & Kovács (2020) Eq. 11 jump; noise-aware stable-branch decomposition |
 | `datasets.py` | provenance-checked loaders, weighted FFT KDE, headline reproduction tests, sampling-prior forms |
 | `priors.py` | unit cube -> the three parameters |
@@ -25,7 +29,8 @@ of which change every Bayes factor.
 | `model.py` | prior + EOS + solver + likelihood -> callables for dynesty; `screen()` is the single definition of the hard constraints |
 | `acceptance.py` | Monte-Carlo fraction of the prior that survives those constraints, which renormalises the evidence |
 | `run_inference.py` | dynesty driver, one run per hadronic EOS, ln B against the pure hadronic EOS |
-| `analysis.py` | posterior summary, corner plot, M-R band, branch and transition-reachability diagnostics |
+| `analysis.py` | posterior summary, five figures (corner with the screened prior overlaid, M-R band, Lambda(M) band, EOS band, dynesty run diagnostics), branch and transition-reachability diagnostics |
+| `compare.py` | the cross-EOS figure: ln B against L and against the baseline's R_1.4, plus `lnB_table.csv` |
 | `validate.py` | 10 groups of numerical checks; exits non-zero if any fail |
 | `mockdata.py` | synthetic data built as real likelihood *terms*, so mock runs use the production code path |
 
@@ -38,7 +43,8 @@ python run_inference.py --mock --nlive 80 --maxcall 4000       # pipeline test, 
 python acceptance.py --eos ../EOSBetaNL3.dat --nprocs 6        # f_acc on its own
 python run_inference.py --nlive 500 --nprocs 8                 # real data
 python run_inference.py --rule max                             # branch rule: mixture | max | sum
-python analysis.py results/EOSBetaFSU2L80
+python analysis.py results/EOSBetaFSU2L80                      # per-run figures
+python compare.py results                                     # the cross-EOS ln B figure
 ```
 
 ## Data

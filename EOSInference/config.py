@@ -84,6 +84,10 @@ SWEEP = {
 # `bounds` are hard edges of the SAMPLING prior (not of physics): the KDE mirrors
 # samples through them instead of leaking probability past them.
 # --------------------------------------------------------------------------
+# FROZEN 2026-11-01 (see PREREGISTRATION.md).  The release chosen for each
+# source is a pre-registered decision, not a default: J0030 = Kini+2026 PDT-U,
+# J0437 = Miller+2026, GW170817 = GWTC-1 IMRPhenomPv2NRT low-spin.  Swapping one
+# in produces a SENSITIVITY number, which must be labelled as such.
 _NICER = "../NICER PSR "
 _LVK = "../LVK GW170817/"
 
@@ -173,7 +177,10 @@ DATA = {
 
 LIKELIHOOD = {
     # Joint prior over (mass, branch) when an EOS has several stable branches.
-    #   "mixture" (default, approved) | "sum" | "max"   -- see likelihood.py
+    #   "mixture" | "sum" | "max"   -- see likelihood.py
+    # FROZEN 2026-11-01 as "mixture": only 2.2% of accepted draws are multi-branch
+    # and on those all three rules agree to 0.01 nat, so the rule does no
+    # measurable work; "mixture" is the one that is a proper marginal.
     "branch_rule": "mixture",
     # Lowest mass the population prior puts any weight on.  1.0 also matches the
     # lower edge of the J0030 sampling prior.
@@ -223,7 +230,10 @@ ACCEPTANCE = {"n_draws": 4000, "seed": 7}
 # --------------------------------------------------------------------------
 SAMPLER = {
     "nlive": 500,
-    "dlogz": 0.5,
+    # 0.1, not 0.5: dlogz bounds the evidence still sitting in the live points,
+    # and the ln B differences this study reports are order 1 nat, so a 0.5
+    # stopping criterion is the same size as the signal.  FROZEN 2026-11-01.
+    "dlogz": 0.1,
     "sample": "auto",
     "bound": "multi",
     "nprocs": 1,

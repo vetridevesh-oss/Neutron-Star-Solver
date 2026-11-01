@@ -1,5 +1,5 @@
 """
-run_inference.py -- nested-sampling Bayesian inference of the two-transition hybrid core.
+run_inference.py -- nested-sampling Bayesian inference of the hybrid core.
 
     python run_inference.py                       # all EOS files in config.HADRONIC_EOS_FILES
     python run_inference.py --eos EOSBetaFSU2L80.dat --nlive 800 --nprocs 8

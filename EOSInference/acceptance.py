@@ -94,7 +94,7 @@ def estimate(model, n_draws=None, seed=None, cache=None, pool=None, verbose=Fals
 
     Draws u ~ U(0,1)^ndim, pushes them through model.prior_transform and classifies
     them with model.screen.  Returns a JSON-able dict with f_acc, its binomial
-    error, the rejection breakdown and P(gamma1 < gamma2) among accepted draws.
+    error and the rejection breakdown.
 
     `cache` is a path; a cached result is reused only if it was computed for the
     same table with the same n_draws and seed.  `pool` is anything with a .map
